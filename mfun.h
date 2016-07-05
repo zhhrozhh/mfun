@@ -3,23 +3,18 @@
 #include<string>
 #include<map>
 #include<cmath>
-using namespace std;
+#include"stdarg.h"
+#include"algebra.h"
 class Mfun{
     public:
-        class DnC{//double value + check bit
-            public:
-                DnC():d(0),c(0){}
-                DnC(double d,bool c):d(d),c(c){}
-                double d;
-                bool c;
-        };
         Mfun(string type):type(type){}
         virtual Mfun*d(string var){return nullptr;}
         virtual Mfun*x1(){return nullptr;}
         virtual Mfun*x2(){return nullptr;}
-        virtual void varScan(map<string,DnC>&m){};
+        virtual void varScan(map<string,double>&m){};
         virtual Mfun*grad();
-        virtual Mfun*getVal(map<string,DnC>&m){return nullptr;}
+        virtual Mfun*getVal(map<string,double>&m){return nullptr;}
+        virtual string ts(){return "";}
         string type;
 };
 class MfunErr:public Mfun{
@@ -30,9 +25,12 @@ class MfunCons:public Mfun{
     public:
         MfunCons(double val):Mfun("c"),val(val){}
         Mfun*d(string var){return new MfunCons(0);}
-        void varScan(map<string,DnC>&m){}
-        Mfun*getVal(map<string,DnC>&m){
+        void varScan(map<string,double>&m){}
+        Mfun*getVal(map<string,double>&m){
             return this;
+        }
+        string ts(){
+            return to_string(val);
         }
         double val;
 };
@@ -42,21 +40,24 @@ class MfunVar:public Mfun{
         Mfun*d(string v){
             return new MfunCons(v==var);
         }
-        void varScan(map<string,DnC>&m){
-            if(m.find(var)==m.end())m.insert(make_pair(var,DnC()));
+        void varScan(map<string,double>&m){
+            if(m.find(var)==m.end())m.insert(make_pair(var,0));
         }
-        Mfun*getVal(map<string,DnC>&m){
-            if(m[var].c)return new MfunCons(m[var].d);
-            return new MfunErr();
+        Mfun*getVal(map<string,double>&m){
+            return new MfunCons(m[var]);
         }
+        string ts(){return var;}
         string var;
 };
 class MfunUni:public Mfun{
     public:
         MfunUni(string type,Mfun*var1):Mfun(type),var1(var1){}
         Mfun*x1(){return var1;}
-        void varScan(map<string,DnC>&m){
+        void varScan(map<string,double>&m){
             var1->varScan(m);
+        }
+        string ts(){
+            return type+string("(")+var1->ts()+string(")");
         }
         Mfun*var1;
 };
@@ -65,9 +66,12 @@ class MfunBi:public Mfun{
         MfunBi(string type,Mfun*var1,Mfun*var2):Mfun(type),var1(var1),var2(var2){}
         Mfun*x1(){return var1;}
         Mfun*x2(){return var2;}
-        void varScan(map<string,DnC>&m){
+        void varScan(map<string,double>&m){
             var1->varScan(m);
             var2->varScan(m);
+        }
+        string ts(){
+            return var1->ts() + type + var2->ts();
         }
         Mfun*var1;
         Mfun*var2;
@@ -77,7 +81,6 @@ Mfun*SUB(Mfun*a,Mfun*b);
 Mfun*MUL(Mfun*a,Mfun*b);
 Mfun*DIV(Mfun*a,Mfun*b);
 Mfun*POW(Mfun*a,Mfun*b);
-Mfun*LN(Mfun*a);
 class MfunMat:public Mfun{
     public:
         class SIZ{
@@ -92,7 +95,17 @@ class MfunMat:public Mfun{
             size.r = mat.size();
             size.c = mat[0].size();
         }
-        void varScan(map<string,DnC>&m){
+        MfunMat(MAT<double> m):Mfun("m"){
+            for(size_t i=0;i<m.r();i++){
+                vector<Mfun*>rv;
+                for(size_t j=0;j<m.c();j++)
+                    rv.push_back(new MfunCons(m[i][j]));
+                mat.push_back(rv);
+            }
+            size.r = m.r();
+            size.c = m.c();
+        }
+        void varScan(map<string,double>&m){
             for(size_t i=0;i<size.r;i++)
                 for(size_t j=0;j<size.c;j++)
                     mat[i][j]->varScan(m);
@@ -101,7 +114,46 @@ class MfunMat:public Mfun{
             //todo
             return nullptr;
         }
+        void addRow(vector<Mfun*>row){
+            mat.push_back(row);
+            size.r++;
+        }
+        void addCol(vector<Mfun*>col){
+            for(size_t i=0;i<size.r;i++)
+                mat[i].push_back(col[i]);
+            size.c++;
+        }
+        void addRow(Mfun*a0,...){
+            vector<Mfun*>newR;
+            newR.push_back(a0);
+            va_list vl;
+            va_start(vl,a0);
+            for(size_t i=1;i<size.c;i++)
+                newR.push_back(va_arg(vl,Mfun*));
+            va_end(vl);
+            mat.push_back(newR);
+            size.r++;
+        }
+        void addCol(Mfun*a0,...){
+            va_list vl;
+            va_start(vl,a0);
+            mat[0].push_back(a0);
+            for(size_t i=1;i<size.r;i++)
+                mat[i].push_back(va_arg(vl,Mfun*));
+            va_end(vl);
+            size.c++;
+        }
         vector<vector<Mfun*> >mat;
+        MAT<double>conM(){
+            vector<vector<double> >m;
+            for(size_t i=0;i<size.r;i++){
+                vector<double>rv;
+                for(size_t j=0;j<size.c;j++)
+                    rv.push_back(((MfunCons*)mat[i][j])->val);
+                m.push_back(rv);
+            }
+            return MAT<double>(m);
+        }
         Mfun*d(string v){
             vector<vector<Mfun*> >nv;
             for(size_t i=0;i<mat.size();i++){
@@ -123,7 +175,8 @@ class MfunMat:public Mfun{
             //todo
             return 0;
         }
-        Mfun*getVal(map<string,DnC>&m){
+        Mfun*getVal(map<string,double>&m){
+            if(size.r==1 && size.c==1)return mat[0][0]->getVal(m);
             vector<vector<Mfun*> >res;
             for(size_t i=0;i<size.r;i++){
                 vector<Mfun*>rv;
@@ -133,6 +186,15 @@ class MfunMat:public Mfun{
             }
             return new MfunMat(res);
         }
+        string ts(){
+            string res = "";
+            for(size_t i=0;i<size.r;i++){
+                for(size_t j=0;j<size.c;j++)
+                    res = res+mat[i][j]->ts()+string(",   ");
+                res = res+"\n";
+            }
+            return res;
+        }
         SIZ size;
 };
 class MfunAdd:public MfunBi{
@@ -141,7 +203,7 @@ class MfunAdd:public MfunBi{
         Mfun*d(string v){
             return ADD(var1->d(v),var2->d(v));
         }
-        Mfun*getVal(map<string,DnC>&m){
+        Mfun*getVal(map<string,double>&m){
             return ADD(var1->getVal(m),var2->getVal(m));
         }
 };
@@ -151,7 +213,7 @@ class MfunSub:public MfunBi{
         Mfun*d(string v){
             return SUB(var1->d(v),var2->d(v));
         }
-        Mfun*getVal(map<string,DnC>&m){
+        Mfun*getVal(map<string,double>&m){
             return SUB(var1->getVal(m),var2->getVal(m));
         }
 };
@@ -161,7 +223,7 @@ class MfunMul:public MfunBi{
         Mfun*d(string v){
             return ADD(MUL(var1->d(v),var2),MUL(var1,var2->d(v)));
         }
-        Mfun*getVal(map<string,DnC>&m){
+        Mfun*getVal(map<string,double>&m){
             return MUL(var1->getVal(m),var2->getVal(m));
         }
 };
@@ -171,17 +233,18 @@ class MfunDiv:public MfunBi{
         Mfun*d(string v){
             return DIV(SUB(MUL(var1->d(v),var2),MUL(var1,var2->d(v))),MUL(var2,var2));
         }
-        Mfun*getVal(map<string,DnC>&m){
+        Mfun*getVal(map<string,double>&m){
             return DIV(var1->getVal(m),var2->getVal(m));
         }
 };
+Mfun*MLn(Mfun*);
 class MfunPow:public MfunBi{
     public:
         MfunPow(Mfun*var1,Mfun*var2):MfunBi("^",var1,var2){}
         Mfun*d(string v){
-            return ADD(MUL(MUL(var2,POW(var1,SUB(var2,new MfunCons(1)))),var1->d(v)),MUL(MUL(POW(var1,var2),LN(var1)),var2->d(v)));
+            return ADD(MUL(MUL(var2,POW(var1,SUB(var2,new MfunCons(1)))),var1->d(v)),MUL(MUL(POW(var1,var2),MLn(var1)),var2->d(v)));
         }
-        Mfun*getVal(map<string,DnC>&m){
+        Mfun*getVal(map<string,double>&m){
             return POW(var1->getVal(m),var2->getVal(m));
         }
 };
@@ -304,20 +367,6 @@ Mfun* MTanh(Mfun*);
 Mfun* MCoth(Mfun*);
 Mfun* MSech(Mfun*);
 Mfun* MCsch(Mfun*);
-class MfunExp:public MfunUni{
-    public:
-        MfunExp(Mfun*var1):MfunUni("exp",var1){}
-        Mfun*d(string v){
-            return MUL(this,var1->d(v));
-        }
-};
-class MfunLn:public MfunUni{
-    public:
-        MfunLn(Mfun*var1):MfunUni("ln",var1){}
-        Mfun*d(string v){
-            return DIV(var1->d(v),var1);
-        }
-};
 double gvSin(double x){return sin(x);}
 double gvCos(double x){return cos(x);}
 double gvTan(double x){return tan(x);}
@@ -330,12 +379,15 @@ double gvTanh(double x){return tanh(x);}
 double gvCoth(double x){return sinh(x)/cosh(x);}
 double gvSech(double x){return 1/cosh(x);}
 double gvCsch(double x){return 1/sinh(x);}
+double gvArcTan(double x){return atan(x);}
+double gvLn(double x){return log(x);}
+double gvExp(double x){return exp(x);}
 #define UNI_ClassD(x) \
 class Mfun##x:public MfunUni{\
     public:\
         Mfun##x(Mfun*var1):MfunUni(#x,var1){}\
         Mfun*d(string v);\
-        Mfun*getVal(map<string,DnC>&m){\
+        Mfun*getVal(map<string,double>&m){\
             Mfun*tf = var1->getVal(m);\
             if(tf->type=="c")return new MfunCons(gv##x(((MfunCons*)tf)->val));\
             MfunMat*mm = (MfunMat*)tf;\
@@ -349,6 +401,7 @@ class Mfun##x:public MfunUni{\
             return new MfunMat(res);\
         }\
 }
+UNI_ClassD(ArcTan);
 UNI_ClassD(Sin);
 UNI_ClassD(Cos);
 UNI_ClassD(Tan);
@@ -361,8 +414,12 @@ UNI_ClassD(Tanh);
 UNI_ClassD(Coth);
 UNI_ClassD(Sech);
 UNI_ClassD(Csch);
+UNI_ClassD(Exp);
+UNI_ClassD(Ln);
+#undef UNI_ClassD
 #define FuncD(x) \
 Mfun* M##x(Mfun*v){\
+    if(v->type=="c")return new MfunCons(gv##x(((MfunCons*)v)->val));\
     if(v->type=="m"){\
         vector<vector<Mfun*> >vvm;\
         MfunMat*m = (MfunMat*)v;\
@@ -376,6 +433,7 @@ Mfun* M##x(Mfun*v){\
     }\
     return new Mfun##x(v);\
 }
+FuncD(ArcTan);
 FuncD(Sin);
 FuncD(Cos);
 FuncD(Tan);
@@ -388,9 +446,9 @@ FuncD(Tanh);
 FuncD(Coth);
 FuncD(Sech);
 FuncD(Csch);
-Mfun*LN(Mfun*var1){
-    return new MfunLn(var1);
-}
+FuncD(Exp);
+FuncD(Ln);
+#undef FuncD
 Mfun*MfunSin::d(string v){
     return MUL(MCos(var1),var1->d(v));
 }
@@ -427,11 +485,20 @@ Mfun*MfunSech::d(string v){
 Mfun*MfunCsch::d(string v){
     return MUL(MUL(MUL(var1->d(v),MCsch(var1)),MCoth(var1)),new MfunCons(-1));
 }
+Mfun*MfunArcTan::d(string v){
+    return MUL(DIV(new MfunCons(1),ADD(POW(var1,new MfunCons(2)),new MfunCons(1))),var1->d(v));
+}
+Mfun*MfunLn::d(string v){
+    return DIV(var1->d(v),var1);
+}
+Mfun*MfunExp::d(string v){
+    return MUL(this,var1->d(v));
+}
 Mfun*Mfun::grad(){
     vector<Mfun*>res;
-    map<string,DnC>varL;
+    map<string,double>varL;
     varScan(varL);
-    for(map<string,DnC>::iterator it = varL.begin();it!=varL.end();it++)
+    for(map<string,double>::iterator it = varL.begin();it!=varL.end();it++)
         res.push_back(d(it->first));
     vector<vector<Mfun*> >rr;
     rr.push_back(res);
